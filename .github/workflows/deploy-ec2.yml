@@ -2,9 +2,7 @@
 name: Deploy ALGOPILOT to EC2
 
 on:
-  push:
-    branches:
-      - main
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -37,10 +35,11 @@ jobs:
         run: |
           docker load -i /tmp/backend.tar
           docker load -i /tmp/frontend.tar
+
           docker save \
             algopilot-backend:latest \
             algopilot-frontend:latest \
-            -o /tmp/images.tar
+            -o images.tar
 
       - name: Copy TAR to Amazon Linux EC2
         uses: appleboy/scp-action@v0.1.7
@@ -48,11 +47,10 @@ jobs:
           host: ${{ secrets.EC2_HOST }}
           username: ec2-user
           key: ${{ secrets.EC2_SSH_KEY }}
-          source: /tmp/images.tar
+          source: images.tar
           target: /home/ec2-user/
-          strip_components: 2
 
-      - name: Deploy containers on EC2
+      - name: Deploy containers as root
         uses: appleboy/ssh-action@v1.2.0
         with:
           host: ${{ secrets.EC2_HOST }}
@@ -61,14 +59,17 @@ jobs:
           script: |
             set -e
 
-            # Load application images
+            sudo -n bash <<'ROOT_SCRIPT'
+            set -e
+
+            # Import application images
             docker load -i /home/ec2-user/images.tar
 
-            # Create shared Docker network
+            # Create shared network if necessary
             docker network inspect algopilot-network >/dev/null 2>&1 ||
               docker network create algopilot-network
 
-            # Start Redis if it does not exist
+            # Start Redis only if it doesn't exist
             if ! docker container inspect redis >/dev/null 2>&1; then
               docker run -d \
                 --name redis \
@@ -102,9 +103,11 @@ jobs:
               -p 80:4173 \
               algopilot-frontend:latest
 
-            # Clean up
+            # Cleanup
             rm -f /home/ec2-user/images.tar
             docker image prune -f
 
-            # Show running containers
+            # Display container status
             docker ps
+
+            ROOT_SCRIPT
