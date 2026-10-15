@@ -1,0 +1,7 @@
+```text
+node_modules
+.env
+.env.*
+.git
+npm-debug.log
+```
