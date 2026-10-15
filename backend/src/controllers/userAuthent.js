@@ -23,7 +23,7 @@ const cookieOptions = {
   maxAge: 60 * 60 * 1000,                  // Expiration interval: 1 hour in milliseconds
   httpOnly: true,                          // Mitigates XSS by preventing client-side script access
   secure: false,                            // Allow cookies over HTTP during local development
-  sameSite: isProduction ? 'None' : 'Lax'  // Controls cross-site cookie transmission policies
+  sameSite: 'Lax'  // Controls cross-site cookie transmission policies
 };
 
 /**
