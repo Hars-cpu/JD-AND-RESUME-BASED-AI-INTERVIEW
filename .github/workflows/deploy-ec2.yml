@@ -1,8 +1,15 @@
 
-name: Deploy ALGOPILOT to EC2
+name: Build and Deploy ALGOPILOT
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - "backend/**"
+      - "frontend/**"
+      - ".github/workflows/deploy.yml"
 
 permissions:
   contents: read
@@ -12,15 +19,17 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # 1. Checkout repository
       - name: Checkout code
         uses: actions/checkout@v4
-       
-    
+
+      # 2. Configure Docker Buildx
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
         with:
           driver: docker-container
 
+      # 3. Build backend image and export as TAR
       - name: Build backend Docker image
         uses: docker/build-push-action@v6
         with:
@@ -28,6 +37,7 @@ jobs:
           tags: algopilot-backend:latest
           outputs: type=docker,dest=/tmp/backend.tar
 
+      # 4. Build frontend image and export as TAR
       - name: Build frontend Docker image
         uses: docker/build-push-action@v6
         with:
@@ -37,16 +47,25 @@ jobs:
             VITE_API_URL=${{ secrets.VITE_API_URL }}
           outputs: type=docker,dest=/tmp/frontend.tar
 
-      - name: Combine images into TAR
+      # 5. Load images into Docker
+      - name: Load Docker images
         run: |
           docker load -i /tmp/backend.tar
           docker load -i /tmp/frontend.tar
+          docker image ls
 
+      # 6. Combine images into one TAR archive
+      - name: Combine images into TAR
+        run: |
           docker save \
             algopilot-backend:latest \
             algopilot-frontend:latest \
-            -o images.tar
+            -o "$GITHUB_WORKSPACE/images.tar"
 
+          chmod 644 "$GITHUB_WORKSPACE/images.tar"
+          ls -lh "$GITHUB_WORKSPACE/images.tar"
+
+      # 7. Copy TAR archive to EC2
       - name: Copy TAR to Amazon Linux EC2
         uses: appleboy/scp-action@v0.1.7
         with:
@@ -56,6 +75,7 @@ jobs:
           source: images.tar
           target: /home/ec2-user/
 
+      # 8. Deploy containers on EC2 as root
       - name: Deploy containers as root
         uses: appleboy/ssh-action@v1.2.0
         with:
@@ -63,19 +83,17 @@ jobs:
           username: ec2-user
           key: ${{ secrets.EC2_SSH_KEY }}
           script: |
-            set -e
-
             sudo -n bash <<'ROOT_SCRIPT'
             set -e
 
-            # Import application images
+            echo "Loading Docker images..."
             docker load -i /home/ec2-user/images.tar
 
-            # Create shared network if necessary
-            docker network inspect algopilot-network >/dev/null 2>&1 ||
+            echo "Creating Docker network if needed..."
+            docker network inspect algopilot-network >/dev/null 2>&1 || \
               docker network create algopilot-network
 
-            # Start Redis only if it doesn't exist
+            echo "Starting Redis if needed..."
             if ! docker container inspect redis >/dev/null 2>&1; then
               docker run -d \
                 --name redis \
@@ -89,7 +107,15 @@ jobs:
               docker start redis 2>/dev/null || true
             fi
 
-            # Replace backend container
+            echo "Checking backend environment file..."
+            test -f /home/ec2-user/backend.env || {
+              echo "ERROR: /home/ec2-user/backend.env is missing"
+              exit 1
+            }
+
+            chmod 600 /home/ec2-user/backend.env
+
+            echo "Replacing backend container..."
             docker rm -f algopilot-backend 2>/dev/null || true
 
             docker run -d \
@@ -100,7 +126,7 @@ jobs:
               -p 5000:5000 \
               algopilot-backend:latest
 
-            # Replace frontend container
+            echo "Replacing frontend container..."
             docker rm -f algopilot-frontend 2>/dev/null || true
 
             docker run -d \
@@ -109,11 +135,14 @@ jobs:
               -p 80:4173 \
               algopilot-frontend:latest
 
-            # Cleanup
+            echo "Removing transferred archive..."
             rm -f /home/ec2-user/images.tar
+
+            echo "Removing dangling images..."
             docker image prune -f
 
-            # Display container status
-            docker ps
+            echo "Deployment complete. Container status:"
+            docker ps -a
 
             ROOT_SCRIPT
+
