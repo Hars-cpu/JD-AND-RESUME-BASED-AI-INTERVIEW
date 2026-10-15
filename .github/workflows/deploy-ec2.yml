@@ -1,0 +1,108 @@
+
+name: Deploy ALGOPILOT to EC2
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Build backend Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          tags: algopilot-backend:latest
+          outputs: type=docker,dest=/tmp/backend.tar
+
+      - name: Build frontend Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./frontend
+          tags: algopilot-frontend:latest
+          build-args: |
+            VITE_API_URL=${{ secrets.VITE_API_URL }}
+          outputs: type=docker,dest=/tmp/frontend.tar
+
+      - name: Combine images into TAR
+        run: |
+          docker load -i /tmp/backend.tar
+          docker load -i /tmp/frontend.tar
+          docker save \
+            algopilot-backend:latest \
+            algopilot-frontend:latest \
+            -o /tmp/images.tar
+
+      - name: Copy TAR to Amazon Linux EC2
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ec2-user
+          key: ${{ secrets.EC2_SSH_KEY }}
+          source: /tmp/images.tar
+          target: /home/ec2-user/
+          strip_components: 2
+
+      - name: Deploy containers on EC2
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ec2-user
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            set -e
+
+            # Load application images
+            docker load -i /home/ec2-user/images.tar
+
+            # Create shared Docker network
+            docker network inspect algopilot-network >/dev/null 2>&1 ||
+              docker network create algopilot-network
+
+            # Start Redis if it does not exist
+            if ! docker container inspect redis >/dev/null 2>&1; then
+              docker run -d \
+                --name redis \
+                --network algopilot-network \
+                --restart unless-stopped \
+                -v redis_data:/data \
+                redis:7-alpine \
+                redis-server --appendonly yes
+            else
+              docker network connect algopilot-network redis 2>/dev/null || true
+              docker start redis 2>/dev/null || true
+            fi
+
+            # Replace backend container
+            docker rm -f algopilot-backend 2>/dev/null || true
+
+            docker run -d \
+              --name algopilot-backend \
+              --network algopilot-network \
+              --restart unless-stopped \
+              --env-file /home/ec2-user/backend.env \
+              -p 5000:5000 \
+              algopilot-backend:latest
+
+            # Replace frontend container
+            docker rm -f algopilot-frontend 2>/dev/null || true
+
+            docker run -d \
+              --name algopilot-frontend \
+              --restart unless-stopped \
+              -p 80:4173 \
+              algopilot-frontend:latest
+
+            # Clean up
+            rm -f /home/ec2-user/images.tar
+            docker image prune -f
+
+            # Show running containers
+            docker ps
