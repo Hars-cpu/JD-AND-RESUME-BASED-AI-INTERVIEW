@@ -53,7 +53,7 @@ graph TD
 
     %% External Interfaces
     subgraph ExternalServices ["External Engines"]
-        Services -->|Base64 Batch Compilation| Judge0["Self-hosted Judge0 sandboxed compilers"]
+        Services -->|Base64 Batch Compilation| Judge0["Judge0 CE via RapidAPI"]
         Services -->|JSON Mode Inference| Groq["Groq SDK (Llama 3.3 70B Model)"]
     end
 ```
@@ -138,7 +138,7 @@ Every technology chosen for ALGOPILOT matches production-grade, highly available
     1.  The frontend loads starter code based on selected language (JavaScript uses `fs.readFileSync(0, 'utf8')` to parse stdin, C++ uses `cin`, Java uses `Main` class parsing).
     2.  `submitCode` in [backend/src/controllers/userSubmission.js](file:///d:/jyv/ALGOPILOT/backend/src/controllers/userSubmission.js) maps test cases from `hiddenTestCases` to a payload.
     3.  [backend/src/utils/problemUtility.js](file:///d:/jyv/ALGOPILOT/backend/src/utils/problemUtility.js#L19-L55) encodes the source code, input values, and expected outputs in Base64 using `Buffer.from(val).toString('base64')` to prevent encoding bugs.
-    4.  It submits a batch request via `POST ${JUDGE0_URL}/submissions/batch?base64_encoded=true`.
+    4.  It submits a batch request via `POST https://${JUDGE0_HOST}/submissions/batch?base64_encoded=true` through RapidAPI.
     5.  It polls the API up to 25 times at 1s intervals. Once all tokens report `status_id > 2` (execution done), stdout/stderr outputs are decoded back to UTF-8.
     6.  Results are validated. If any test case reports a status other than `3` (Accepted), execution stops, returning compile errors (6), runtime errors (ex. 4), or Time Limit Exceeded (5).
 *   **Files Responsible**:
@@ -659,7 +659,7 @@ To prevent API blocking, user solve states are updated in the background. The se
 *   Node.js (v18 or higher)
 *   MongoDB instance (local or Atlas)
 *   Redis server (local or Upstash)
-*   Judge0 CE instance (local or self-hosted)
+*   RapidAPI subscription with access to the Judge0 CE API
 *   Groq API Key (from Groq Console)
 
 ### Environment Variables
@@ -671,7 +671,8 @@ FRONTEND_URL=http://localhost:5714
 DB_CONNECT_STRING=mongodb+srv://<username>:<password>@cluster.mongodb.net/algopilot
 JWT_KEY=supersecretjwtkeysigninghere
 REDIS_URL=redis://default:<password>@<host>:<port>
-JUDGE0_URL=http://localhost:2358
+JUDGE0_KEY=your_rapidapi_key
+JUDGE0_HOST=judge0-extra-ce1.p.rapidapi.com
 GROQ_API_KEY=your_groq_console_api_key
 ```
 
@@ -720,9 +721,9 @@ GitHub Actions validates changes before they are merged into `main`:
 
 The frontend CI build uses the `VITE_API_URL` repository secret. Since the workflows are path-scoped, a frontend-only change does not run backend CI, and vice versa.
 
-### Manual EC2 Deployment
+### Automatic EC2 Deployment
 
-Production deployment is started manually from the **Actions** tab using the `Deploy ALGOPILOT to EC2` workflow. The workflow:
+Production deployment runs automatically after changes are pushed to the `main` branch using the `Deploy ALGOPILOT to EC2` workflow. The workflow:
 
 1. Builds Docker images for the backend and frontend.
 2. Injects `VITE_API_URL` into the frontend image at build time.
@@ -736,7 +737,7 @@ The deployment expects these GitHub secrets:
 * `EC2_HOST`: public hostname or IP address of the EC2 instance.
 * `EC2_SSH_KEY`: private SSH key for the `ec2-user` account.
 
-Backend secrets are stored only on the EC2 host in `/home/ec2-user/backend.env`. The deployment publishes the frontend at port `80` and the backend at port `5000`. Redis remains internal to the `algopilot-network` Docker network and persists data in the `redis_data` named volume.
+Backend secrets, including `JUDGE0_KEY` and `JUDGE0_HOST`, are stored only on the EC2 host in `/home/ec2-user/backend.env`. The deployment publishes the frontend at port `80` and the backend at port `5000`. Redis remains internal to the `algopilot-network` Docker network and persists data in the `redis_data` named volume.
 
 ---
 
@@ -754,7 +755,7 @@ Backend secrets are stored only on the EC2 host in `/home/ec2-user/backend.env`.
 ## 12. Interview Q&A Section
 
 ### Q1: What is the high-level architecture of ALGOPILOT, and how do the components interact?
-**Answer**: ALGOPILOT is built on the MERN stack with a decoupled React 19 (Vite) client and Node.js (Express) backend. The frontend handles code editing (Monaco) and voice processing (Web Speech API). The backend coordinates business logic, managing submissions, and orchestrating external API calls. MongoDB Atlas handles primary data persistence (profiles, sessions, reports), while Redis manages session blacklists and caches roadmaps. Code execution is offloaded to a self-hosted Judge0 instance, and AI mock evaluations run through Llama 3.3 using the Groq SDK.
+**Answer**: ALGOPILOT is built on the MERN stack with a decoupled React 19 (Vite) client and Node.js (Express) backend. The frontend handles code editing (Monaco) and voice processing (Web Speech API). The backend coordinates business logic, managing submissions, and orchestrating external API calls. MongoDB Atlas handles primary data persistence (profiles, sessions, reports), while Redis manages session blacklists and caches roadmaps. Code execution is offloaded to Judge0 CE through RapidAPI, and AI mock evaluations run through Llama 3.3 using the Groq SDK.
 
 ### Q2: Why did the project decide to implement direct Groq SDK calls instead of using LangChain?
 **Answer**: While LangChain provides useful abstractions, it adds dependency overhead, abstract tracing latency, and makes customizing retry loops difficult. Direct integration via the official `groq-sdk` allowed us to write a lightweight, high-performance wrapper ([backend/src/services/ai/aiProvider.js](file:///d:/jyv/ALGOPILOT/backend/src/services/ai/aiProvider.js)) that implements custom exponential backoff, parses JSON mode responses directly, and handles rate limits (429) cleanly with minimal latency.

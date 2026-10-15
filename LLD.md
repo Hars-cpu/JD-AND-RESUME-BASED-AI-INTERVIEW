@@ -155,9 +155,9 @@ The repository uses separate GitHub Actions workflows for the frontend and backe
 *   **Frontend CI** (`.github/workflows/ci-frontend.yml`): uses Node.js 20, restores npm cache from `frontend/package-lock.json`, runs `npm ci`, and executes `npm run build`. The build receives `VITE_API_URL` through a GitHub Actions secret.
 *   **Backend CI** (`.github/workflows/ci-backend.yml`): uses Node.js 20, restores npm cache from `backend/package-lock.json`, runs `npm ci`, and executes `node --check index.js` to verify backend syntax.
 
-### 5.2 Manual EC2 Deployment
+### 5.2 Automatic EC2 Deployment
 
-The deployment workflow (`.github/workflows/deploy-ec2.yml`) is manually triggered with `workflow_dispatch`. It does not publish to a container registry; instead, it transfers a combined Docker image archive directly to the EC2 host.
+The deployment workflow (`.github/workflows/deploy-ec2.yml`) runs automatically on pushes to the `main` branch. It does not publish to a container registry; instead, it transfers a combined Docker image archive directly to the EC2 host.
 
 1.  Build `algopilot-backend:latest` from `backend/Dockerfile`.
 2.  Build `algopilot-frontend:latest` from `frontend/Dockerfile`, passing `VITE_API_URL` as a Docker build argument.

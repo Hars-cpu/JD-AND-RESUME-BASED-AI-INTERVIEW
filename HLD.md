@@ -10,7 +10,7 @@ CodeSangram is an advanced MERN stack application offering dual functionality: a
 *   **Backend (API Server)**: Node.js with Express.
 *   **Database**: MongoDB Atlas.
 *   **Cache / Session Store**: Redis (upstash/cloud).
-*   **Code Execution Engine**: Self-hosted Judge0.
+*   **Code Execution Engine**: Judge0 CE via RapidAPI.
 *   **Storage (Media/Docs)**: Cloudinary.
 *   **AI Engine**: Google Gemini API.
 
@@ -29,7 +29,7 @@ graph TD
         Services --> Models
         
         %% External Integrations
-        Services -->|Code Evaluation| Judge0[Self-hosted Judge0]
+        Services -->|Code Evaluation| Judge0[Judge0 CE via RapidAPI]
         Services -->|GenAI Prompts| Gemini[Google Gemini 2.0 Flash]
         Services -->|Video/PDF Upload| Cloudinary[Cloudinary]
     end
@@ -56,7 +56,7 @@ graph TD
 2.  **JWT Issue**: Backend hashes password (bcrypt), signs a JWT (1h expiration), and sets it as an `HttpOnly`, `Secure` cookie.
 3.  **Validation**: `userMiddleware` intercepts requests, extracts the cookie, validates the JWT, and checks if the token is in the Redis Blacklist (for logged-out users).
 
-### 3.2 Code Execution (Judge0)
+### 3.2 Code Execution (Judge0 CE via RapidAPI)
 1.  **Submission**: User writes code in the Monaco Editor and submits.
 2.  **Batching**: Backend maps visible/hidden test cases and creates a batch request to Judge0.
 3.  **Evaluation**: Judge0 runs the code securely in sandboxes and returns tokens.
@@ -78,7 +78,7 @@ graph TD
 
 ## 4. Scalability & Deployment Strategy
 
-*   **Runtime host**: The frontend, backend, and Redis containers run on an **Amazon Linux EC2** instance connected through the `algopilot-network` Docker network.
+*   **Runtime host**: The frontend, backend, and Redis containers run on an **Amazon Linux EC2** instance connected through the `algopilot-network` Docker network. Judge0 CE is not hosted on EC2; code execution is provided by the external RapidAPI service.
 *   **Frontend**: The Vite production build is packaged into a Docker image and served with `vite preview` on container port `4173`, published as port `80` on EC2.
 *   **Backend**: The Node.js service runs in a Docker container on port `5000`. Runtime configuration is loaded from `/home/ec2-user/backend.env`; application state remains external to the process.
 *   **Redis**: Redis runs as a separate container with the `redis_data` named volume and `restart: unless-stopped`, providing token blacklisting and cache persistence across deployments.
@@ -87,9 +87,9 @@ graph TD
 
 ### 4.1 CI/CD Pipeline
 
-GitHub Actions provides path-scoped validation and manual production deployment:
+GitHub Actions provides path-scoped validation and automatic production deployment:
 
 1.  **Frontend CI** runs on pushes and pull requests targeting `main` when `frontend/**` or its workflow changes. It uses Node.js 20, runs `npm ci`, and builds the Vite application with the `VITE_API_URL` GitHub secret.
 2.  **Backend CI** runs on pushes and pull requests targeting `main` when `backend/**` or its workflow changes. It uses Node.js 20, runs `npm ci`, and validates `index.js` with `node --check`.
-3.  **EC2 deployment** is started manually with `workflow_dispatch`. The workflow builds backend and frontend Docker images, passes `VITE_API_URL` as the frontend build argument, combines the images into a TAR archive, copies it to EC2 over SCP, and replaces the application containers over SSH.
-4.  The deployment requires the `VITE_API_URL`, `EC2_HOST`, and `EC2_SSH_KEY` GitHub secrets. Backend secrets are kept on EC2 in `/home/ec2-user/backend.env` and are not baked into the image.
+3.  **EC2 deployment** runs automatically after a push to `main`. The workflow builds backend and frontend Docker images, passes `VITE_API_URL` as the frontend build argument, combines the images into a TAR archive, copies it to EC2 over SCP, and replaces the application containers over SSH.
+4.  The deployment requires the `VITE_API_URL`, `EC2_HOST`, and `EC2_SSH_KEY` GitHub secrets. Backend secrets, including RapidAPI Judge0 credentials, are kept on EC2 in `/home/ec2-user/backend.env` and are not baked into the image.
