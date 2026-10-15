@@ -141,5 +141,34 @@ Abstracted away from controllers, utilizing `@google/generative-ai`.
 ## 4. Security & Permissions
 
 *   **Cookie Security**: JWT tokens are issued with `httpOnly: true`, `secure: true` (in production), and `sameSite: 'none'`. This prevents XSS attacks from extracting the token.
-*   **Cross-Origin**: CORS is configured to accept credentials from the specific Vercel frontend URL, rejecting unauthorized origin requests.
+*   **Cross-Origin**: CORS is configured to accept credentials from the production frontend origin stored in `FRONTEND_URL`, rejecting unauthorized origin requests.
 *   **Admin Routes**: Endpoints like `/problem/create` and `/video/upload` require the JWT payload to contain `role: 'admin'`. This is enforced by `adminMiddleware.js`.
+
+---
+
+## 5. CI/CD and Deployment Design
+
+### 5.1 Continuous Integration
+
+The repository uses separate GitHub Actions workflows for the frontend and backend. Both workflows run on pushes and pull requests targeting `main`, and are path-scoped so unrelated changes do not trigger unnecessary jobs.
+
+*   **Frontend CI** (`.github/workflows/ci-frontend.yml`): uses Node.js 20, restores npm cache from `frontend/package-lock.json`, runs `npm ci`, and executes `npm run build`. The build receives `VITE_API_URL` through a GitHub Actions secret.
+*   **Backend CI** (`.github/workflows/ci-backend.yml`): uses Node.js 20, restores npm cache from `backend/package-lock.json`, runs `npm ci`, and executes `node --check index.js` to verify backend syntax.
+
+### 5.2 Manual EC2 Deployment
+
+The deployment workflow (`.github/workflows/deploy-ec2.yml`) is manually triggered with `workflow_dispatch`. It does not publish to a container registry; instead, it transfers a combined Docker image archive directly to the EC2 host.
+
+1.  Build `algopilot-backend:latest` from `backend/Dockerfile`.
+2.  Build `algopilot-frontend:latest` from `frontend/Dockerfile`, passing `VITE_API_URL` as a Docker build argument.
+3.  Load both images and save them as `/tmp/images.tar`.
+4.  Copy the archive to `/home/ec2-user/images.tar` using `EC2_HOST` and `EC2_SSH_KEY`.
+5.  Over SSH, create `algopilot-network` if needed, start or reuse the Redis container, replace the backend and frontend containers, remove the archive, and prune unused Docker images.
+
+### 5.3 Container Contract
+
+| Container | Image build | Internal port | EC2 published port | Runtime configuration |
+| :--- | :--- | :---: | :---: | :--- |
+| `algopilot-backend` | `backend/Dockerfile` | `5000` | `5000` | `/home/ec2-user/backend.env` |
+| `algopilot-frontend` | `frontend/Dockerfile` | `4173` | `80` | `VITE_API_URL` at image build time |
+| `redis` | `redis:7-alpine` | `6379` | Docker network only | `redis_data` named volume |

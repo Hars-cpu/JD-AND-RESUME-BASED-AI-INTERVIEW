@@ -666,7 +666,7 @@ To prevent API blocking, user solve states are updated in the background. The se
 
 #### Backend (`backend/.env`)
 ```env
-PORT=3000
+PORT=5000
 FRONTEND_URL=http://localhost:5714
 DB_CONNECT_STRING=mongodb+srv://<username>:<password>@cluster.mongodb.net/algopilot
 JWT_KEY=supersecretjwtkeysigninghere
@@ -677,7 +677,7 @@ GROQ_API_KEY=your_groq_console_api_key
 
 #### Frontend (`frontend/.env`)
 ```env
-VITE_API_URL=http://localhost:3000
+VITE_API_URL=http://localhost:5000
 ```
 
 ### Step-by-Step Local Setup
@@ -707,7 +707,40 @@ VITE_API_URL=http://localhost:3000
 
 ---
 
-## 11. Known Limitations & Future Improvements
+## 11. CI/CD and Production Deployment
+
+### Continuous Integration
+
+GitHub Actions validates changes before they are merged into `main`:
+
+| Workflow | Trigger | Checks |
+| :--- | :--- | :--- |
+| `Frontend CI` | Push or pull request to `main` affecting `frontend/**` or the frontend workflow | Node.js 20, `npm ci`, `npm run build` |
+| `Backend CI` | Push or pull request to `main` affecting `backend/**` or the backend workflow | Node.js 20, `npm ci`, `node --check index.js` |
+
+The frontend CI build uses the `VITE_API_URL` repository secret. Since the workflows are path-scoped, a frontend-only change does not run backend CI, and vice versa.
+
+### Manual EC2 Deployment
+
+Production deployment is started manually from the **Actions** tab using the `Deploy ALGOPILOT to EC2` workflow. The workflow:
+
+1. Builds Docker images for the backend and frontend.
+2. Injects `VITE_API_URL` into the frontend image at build time.
+3. Combines both images into `/tmp/images.tar`.
+4. Copies the archive to an Amazon Linux EC2 instance using SCP.
+5. Connects over SSH, loads the images, starts or reuses Redis, and replaces the application containers.
+
+The deployment expects these GitHub secrets:
+
+* `VITE_API_URL`: public API URL embedded in the frontend build.
+* `EC2_HOST`: public hostname or IP address of the EC2 instance.
+* `EC2_SSH_KEY`: private SSH key for the `ec2-user` account.
+
+Backend secrets are stored only on the EC2 host in `/home/ec2-user/backend.env`. The deployment publishes the frontend at port `80` and the backend at port `5000`. Redis remains internal to the `algopilot-network` Docker network and persists data in the `redis_data` named volume.
+
+---
+
+## 12. Known Limitations & Future Improvements
 
 1.  **No Compilation Caching**: Every code submission runs all test cases, even if only a formatting change was made.
     *   *Improvement*: Implement hash checks on source code to skip execution if code matches a recent submission.

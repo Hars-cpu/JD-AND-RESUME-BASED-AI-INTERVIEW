@@ -20,12 +20,11 @@ CodeSangram is an advanced MERN stack application offering dual functionality: a
 
 ```mermaid
 graph TD
-    Client[Web Browser Client] -->|HTTPS / REST| CDN[Vercel CDN]
-    CDN --> FE[React SPA Frontend]
-    FE -->|API Requests| Render[Render Web Service / Node.js]
+    Client[Web Browser Client] -->|HTTP/HTTPS| FE[Frontend Container<br/>EC2 :80 -> :4173]
+    FE -->|API Requests| BE[Backend Container<br/>EC2 :5000]
     
     subgraph Backend Architecture
-        Render --> Controllers
+        BE --> Controllers
         Controllers --> Services
         Services --> Models
         
@@ -37,7 +36,14 @@ graph TD
     
     subgraph Data Layer
         Models -->|Read/Write| MongoDB[(MongoDB Atlas)]
-        Render -->|Token Blacklist| Redis[(Redis)]
+        BE -->|Token Blacklist| Redis[(Redis Container<br/>Persistent Volume)]
+    end
+
+    subgraph Deployment Infrastructure
+        EC2[Amazon Linux EC2]
+        FE
+        BE
+        Redis
     end
 ```
 
@@ -72,7 +78,18 @@ graph TD
 
 ## 4. Scalability & Deployment Strategy
 
-*   **Frontend**: Deployed on **Vercel** to utilize Edge caching and fast CDN delivery for static assets (React bundle).
-*   **Backend**: Deployed on **Render** (Node Web Service). Horizontally scalable. State is kept outside the Node process (MongoDB for data, Redis for session invalidation).
+*   **Runtime host**: The frontend, backend, and Redis containers run on an **Amazon Linux EC2** instance connected through the `algopilot-network` Docker network.
+*   **Frontend**: The Vite production build is packaged into a Docker image and served with `vite preview` on container port `4173`, published as port `80` on EC2.
+*   **Backend**: The Node.js service runs in a Docker container on port `5000`. Runtime configuration is loaded from `/home/ec2-user/backend.env`; application state remains external to the process.
+*   **Redis**: Redis runs as a separate container with the `redis_data` named volume and `restart: unless-stopped`, providing token blacklisting and cache persistence across deployments.
 *   **Database**: **MongoDB Atlas** handles replica sets automatically for high availability and failover.
 *   **Media**: **Cloudinary** offloads bandwidth constraints for video editorials and resumes, saving server storage and network I/O.
+
+### 4.1 CI/CD Pipeline
+
+GitHub Actions provides path-scoped validation and manual production deployment:
+
+1.  **Frontend CI** runs on pushes and pull requests targeting `main` when `frontend/**` or its workflow changes. It uses Node.js 20, runs `npm ci`, and builds the Vite application with the `VITE_API_URL` GitHub secret.
+2.  **Backend CI** runs on pushes and pull requests targeting `main` when `backend/**` or its workflow changes. It uses Node.js 20, runs `npm ci`, and validates `index.js` with `node --check`.
+3.  **EC2 deployment** is started manually with `workflow_dispatch`. The workflow builds backend and frontend Docker images, passes `VITE_API_URL` as the frontend build argument, combines the images into a TAR archive, copies it to EC2 over SCP, and replaces the application containers over SSH.
+4.  The deployment requires the `VITE_API_URL`, `EC2_HOST`, and `EC2_SSH_KEY` GitHub secrets. Backend secrets are kept on EC2 in `/home/ec2-user/backend.env` and are not baked into the image.
