@@ -22,7 +22,7 @@ const isProduction = process.env.NODE_ENV === 'production';
 const cookieOptions = {
   maxAge: 60 * 60 * 1000,                  // Expiration interval: 1 hour in milliseconds
   httpOnly: true,                          // Mitigates XSS by preventing client-side script access
-  secure: isProduction,                    // Requires HTTPS in production environment
+  secure: false,                            // Allow cookies over HTTP during local development
   sameSite: isProduction ? 'None' : 'Lax'  // Controls cross-site cookie transmission policies
 };
 
@@ -161,7 +161,7 @@ const logout = async (req, res) => {
     res.cookie("token", "", {
       expires: new Date(0),
       httpOnly: true,
-      secure: isProduction,
+      secure: false,
       sameSite: isProduction ? 'None' : 'Lax'
     });
 
