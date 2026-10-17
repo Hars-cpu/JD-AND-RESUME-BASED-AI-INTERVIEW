@@ -7,7 +7,7 @@ export default defineConfig({
   ],
   preview: {
     host: '0.0.0.0',
-    port: 5714,
+    port: 4173,
     allowedHosts: [
       'ec2-43-204-103-12.ap-south-1.compute.amazonaws.com',
     ]
